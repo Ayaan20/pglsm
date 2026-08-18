@@ -1,0 +1,181 @@
+==================== pglsm measured results ====================
+host: 2 vCPU, Linux 6.18.5-fc-v20, gcc 13
+PostgreSQL 16.14, shared_buffers=16MB, lsm.top_index_size=4MB, synchronous_commit=off
+All processes on one small VM; the OS page cache absorbs much of the I/O,
+so these numbers UNDERSTATE the LSM advantage on real storage.
+
+### correctness suite (14 checks, lsm vs btree over identical data)
+  --- 1. row counts match
+   counts_match 
+  --------------
+   t
+  (1 row)
+  
+  --- 2. the planner actually picks the lsm index
+                     QUERY PLAN                   
+  ------------------------------------------------
+   Aggregate
+     ->  Bitmap Heap Scan on lt
+           Recheck Cond: (id = '100'::bigint)
+           ->  Bitmap Index Scan on lt_idx
+                 Index Cond: (id = '100'::bigint)
+  (5 rows)
+  
+  --- 3. equality lookups agree on 2000 random keys
+   mismatches 
+  ------------
+            0
+  (1 row)
+  
+  --- 4. range scans agree
+   mismatches 
+  ------------
+            0
+  (1 row)
+  
+  --- 5. no duplicate TIDs returned (would double-count rows)
+   no_duplicates 
+  ---------------
+   t
+  (1 row)
+  
+  --- 6. bitmap scans agree with index scans
+   bitmap_matches 
+  ----------------
+   t
+  (1 row)
+  
+  --- 7. results survive a forced merge
+   merged_something 
+  ------------------
+   t
+  (1 row)
+  
+   correct_after_merge 
+  ---------------------
+   t
+  (1 row)
+  
+  --- 8. UPDATE and DELETE are reflected
+   counts_match_after_dml 
+  ------------------------
+   t
+  (1 row)
+  
+   updated_rows_found 
+  --------------------
+   t
+  (1 row)
+  
+  --- 9. VACUUM cleans all three levels
+   correct_after_vacuum 
+  ----------------------
+   t
+  (1 row)
+  
+  --- 10. NULLs behave
+   nulls_match 
+  -------------
+   t
+  (1 row)
+  
+  --- 11. text opclass works too
+   text_lookup_works 
+  -------------------
+   t
+  (1 row)
+  
+  --- 12. lsm.enabled = off degrades to a plain btree, same answers
+   inserts_with_lsm_disabled 
+  ---------------------------
+   t
+  (1 row)
+  
+  --- 13. level sizes are reported
+    base   | tops  |  total  
+  ---------+-------+---------
+   2568 kB | 48 kB | 2616 kB
+  (1 row)
+  
+  --- 14. stats
+        idx      | n_inserts | n_merges | n_merged_tuples 
+  ---------------+-----------+----------+-----------------
+   bench_lsm_idx |   5200000 |       26 |         5000001
+   lt_idx        |    125619 |        1 |          120000
+   lt2_idx       |     20000 |        0 |               0
+  (3 rows)
+  
+
+### random-insert throughput: 5.2M rows, 26 batches of 200k, identical random keys
+  === insert throughput per batch (rows/sec) ===
+   batch | rows_total | btree_rows_sec | lsm_rows_sec | speedup | btree_index | lsm_index 
+  -------+------------+----------------+--------------+---------+-------------+-----------
+       1 |     200000 |         304959 |       236138 |    0.77 | 5312 kB     | 6320 kB
+       2 |     400000 |         234867 |       190741 |    0.81 | 10 MB       | 11 MB
+       3 |     600000 |         224424 |       225171 |    1.00 | 17 MB       | 17 MB
+       4 |     800000 |         186038 |       211558 |    1.14 | 21 MB       | 21 MB
+       5 |    1000000 |         119199 |       218126 |    1.83 | 30 MB       | 29 MB
+       6 |    1200000 |         118868 |       215157 |    1.81 | 34 MB       | 32 MB
+       7 |    1400000 |         114365 |       229001 |    2.00 | 37 MB       | 38 MB
+       8 |    1600000 |         101594 |       196795 |    1.94 | 42 MB       | 45 MB
+       9 |    1800000 |         103132 |       210577 |    2.04 | 51 MB       | 50 MB
+      10 |    2000000 |          98326 |       207854 |    2.11 | 59 MB       | 55 MB
+      11 |    2200000 |          94625 |       166156 |    1.76 | 65 MB       | 60 MB
+      12 |    2400000 |          88939 |       129347 |    1.45 | 68 MB       | 65 MB
+      13 |    2600000 |          94005 |       187197 |    1.99 | 70 MB       | 71 MB
+      14 |    2800000 |         102271 |       167706 |    1.64 | 74 MB       | 78 MB
+      15 |    3000000 |          91681 |       110364 |    1.20 | 78 MB       | 86 MB
+      16 |    3200000 |          81255 |       120605 |    1.48 | 85 MB       | 90 MB
+      17 |    3400000 |          77537 |       127069 |    1.64 | 93 MB       | 93 MB
+      18 |    3600000 |          81448 |       110064 |    1.35 | 101 MB      | 99 MB
+      19 |    3800000 |          67305 |       145179 |    2.16 | 110 MB      | 104 MB
+      20 |    4000000 |          78856 |       119554 |    1.52 | 117 MB      | 110 MB
+      21 |    4200000 |          76458 |       119878 |    1.57 | 124 MB      | 115 MB
+      22 |    4400000 |          77578 |       144872 |    1.87 | 129 MB      | 120 MB
+      23 |    4600000 |          79781 |       174595 |    2.19 | 133 MB      | 126 MB
+      24 |    4800000 |          77742 |       162727 |    2.09 | 136 MB      | 132 MB
+      25 |    5000000 |          86777 |       129509 |    1.49 | 139 MB      | 139 MB
+      26 |    5200000 |          67430 |       107919 |    1.60 | 141 MB      | 146 MB
+  (26 rows)
+
+  totals
+   which | total_seconds | rows_inserted | overall_rows_sec
+   btree |          53.7 |       5200000 |            96834
+   lsm   |          33.1 |       5200000 |           157000   <- 1.62x
+
+  first half vs second half of the run (the cache-pressure effect)
+   which | first_half | second_half | pct_slowdown
+   btree |     144872 |       80471 |          44%
+   lsm   |     201832 |      133849 |          34%
+
+  final index sizes:  btree 141 MB | lsm 148 MB total (base 143 MB + tops 5472 kB)
+  merge activity:     26 merges, 5,000,001 tuples merged, last merge 2512.5 ms
+
+### point-lookup cost (EXPLAIN ANALYZE, BUFFERS) on the 5.2M-row tables
+                                           QUERY PLAN                                          
+  ---------------------------------------------------------------------------------------------
+   Aggregate (actual time=0.080..0.080 rows=1 loops=1)
+     Buffers: shared hit=2 read=6
+     ->  Index Scan using bench_lsm_idx on bench_lsm (actual time=0.078..0.078 rows=0 loops=1)
+           Index Cond: (id = '123456789'::bigint)
+           Buffers: shared hit=2 read=6
+   Planning:
+     Buffers: shared hit=78 read=35
+   Planning Time: 0.801 ms
+   Execution Time: 0.118 ms
+  (9 rows)
+  
+                                             QUERY PLAN                                           
+  ------------------------------------------------------------------------------------------------
+   Aggregate (actual time=0.029..0.030 rows=1 loops=1)
+     Buffers: shared read=3
+     ->  Index Only Scan using bench_bt_idx on bench_bt (actual time=0.028..0.028 rows=0 loops=1)
+           Index Cond: (id = '123456789'::bigint)
+           Heap Fetches: 0
+           Buffers: shared read=3
+   Planning:
+     Buffers: shared hit=18 read=5
+   Planning Time: 0.153 ms
+   Execution Time: 0.046 ms
+  (10 rows)
+  

@@ -1,0 +1,4 @@
+comment = 'LSM-tree index access method built from B-trees'
+default_version = '1.0'
+module_pathname = '$libdir/lsm'
+relocatable = false
