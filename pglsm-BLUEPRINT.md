@@ -1,7 +1,6 @@
 # LSM-Tree Indexing in PostgreSQL — blueprint, claim audit, and build plan
 
-For Ayaan · project #2 on the System SDE shortlist
-Source of the original line: `Kumar Ankur_4.pdf` (CS631, Prof. S. Sudarshan)
+
 
 ---
 
